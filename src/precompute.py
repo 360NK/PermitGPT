@@ -75,38 +75,35 @@ def generate_zone_summaries():
 
     print("Starting Batch Analysis (This may take 1-2 minutes)...")
     
-    for i, zone in enumerate(unique_zones):
-        print("🚀 Starting Batch Analysis...")
-        print("⏳ We will wait 60 seconds between zones to guarantee success.")
         
-        for i, zone in enumerate(unique_zones):
-            print(f"\n[{i+1}/{len(unique_zones)}] 🤖 Analyzing Zone: {zone}...")
-            
-            # RETRY LOGIC: Try up to 3 times per zone
-            success = False
-            attempts = 0
-            
-            while not success and attempts < 3:
-                try:
-                    # We pass the zone name as the input to the chain
-                    response = chain.invoke(str(zone))
-                    zone_data[str(zone)] = response
-                    print("   ✅ Success.")
-                    success = True
-                except Exception as e:
-                    attempts += 1
-                    wait_time = 60 * attempts # Wait 60s, then 120s, etc.
-                    print(f"   ⚠️ Error (Attempt {attempts}/3): {e}")
-                    print(f"   💤 Hit Rate Limit. Waiting {wait_time}s before retrying...")
-                    time.sleep(wait_time)
-            
-            if not success:
-                print("   ❌ Failed after 3 attempts. Skipping.")
-                zone_data[str(zone)] = "Data unavailable."
+    for i, zone in enumerate(unique_zones):
+        print(f"\n[{i+1}/{len(unique_zones)}] 🤖 Analyzing Zone: {zone}...")
+        
+        # RETRY LOGIC: Try up to 3 times per zone
+        success = False
+        attempts = 0
+        
+        while not success and attempts < 3:
+            try:
+                # We pass the zone name as the input to the chain
+                response = chain.invoke(str(zone))
+                zone_data[str(zone)] = response
+                print("   ✅ Success.")
+                success = True
+            except Exception as e:
+                attempts += 1
+                wait_time = 60 * attempts # Wait 60s, then 120s, etc.
+                print(f"   ⚠️ Error (Attempt {attempts}/3): {e}")
+                print(f"   💤 Hit Rate Limit. Waiting {wait_time}s before retrying...")
+                time.sleep(wait_time)
+        
+        if not success:
+            print("   ❌ Failed after 3 attempts. Skipping.")
+            zone_data[str(zone)] = "Data unavailable."
 
-            # Standard cool-down between successful calls
-            if i < len(unique_zones) - 1:
-                time.sleep(10)
+        # Standard cool-down between successful calls
+        if i < len(unique_zones) - 1:
+            time.sleep(10)
 
     # Save to disk
     with open(OUTPUT_FILE, "w") as f:

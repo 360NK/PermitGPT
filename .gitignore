@@ -1,6 +1,12 @@
 .env
 .DS_Store
-data/
 __pycache__/
 *.zip
 ._*
+data/*
+
+!data/raw
+!data/zone_dictionary.json
+!data/raw/toronto_zoning.geojson
+
+data/raw/*.pdf

@@ -39,6 +39,7 @@ except Exception as e:
 st.title("🏗️ Site Feasibility Engine")
 st.caption("Select a zone category to see instant development rights (Pre-computed by Gemini).")
 
+
 # --- 3. LAYOUT ---
 col1, col2 = st.columns([3, 1])
 
@@ -95,12 +96,25 @@ with col2:
         default_index = all_zones.index(zone_filter[0])
     else:
         default_index = 0
+
+    def format_zone_labels(option):
+        # A simple dictionary to map codes to human names
+        # You can add more mappings as you discover them
+        mapping = {
+            "1": "1 - Residential (Low Density)",
+            "2": "2 - Residential (Multi-Unit)",
+            "6": "6 - Commercial",
+            "201": "201 - Mixed Use"
+        }
+        # If the code isn't in the list, just show "Zone Code: X"
+        return mapping.get(option, f"Zone Code: {option}")
         
     # The Selector now "listens" to the map filter via `index=default_index`
     selected_zone_cat = st.selectbox(
         "Inspect Rules for Category:", 
         options=all_zones,
-        index=default_index  # <--- THIS IS THE MAGIC LINK
+        index=default_index,  # <--- THIS IS THE MAGIC LINK
+        format_func=format_zone_labels
     )
     
     if selected_zone_cat:
