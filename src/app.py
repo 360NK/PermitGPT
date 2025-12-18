@@ -1,125 +1,114 @@
 import streamlit as st
 import geopandas as gpd
 import pydeck as pdk
+import json
 import os
-from dotenv import load_dotenv
 
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
-from langchain_chroma import Chroma
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
-from langchain_core.output_parsers import StrOutputParser
+# --- CONFIGURATION ---
+st.set_page_config(layout="wide", page_title="SiteFeasibility v1")
 
-
-st.set_page_config(layout="wide", page_title="PermitGPT")
-load_dotenv()
-
-@st.cache_resource
-def load_ai_engine():
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
-    
-    if not os.path.exists("data/chroma_db"):
-        return None
-        
-    vector_db = Chroma(persist_directory="data/chroma_db", embedding_function=embeddings)
-    
-    retriever = vector_db.as_retriever(search_kwargs={"k": 3})
-    
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
-    
-    template = """Answer the question based only on the following context:
-    {context}
-
-    Question: {question}
-    """
-    prompt = ChatPromptTemplate.from_template(template)
-
-    # E. The "Chain" (This is the LCEL magic: Search -> Prompt -> AI -> String)
-    # This replaces the broken 'RetrievalQA' class entirely.
-    def format_docs(docs):
-        return "\n\n".join([d.page_content for d in docs])
-
-    chain = (
-        {"context": retriever | format_docs, "question": RunnablePassthrough()}
-        | prompt
-        | llm
-        | StrOutputParser()
-    )
-    
-    return chain
-
-qa_chain = None
-if os.getenv("GOOGLE_API_KEY"):
-    try:
-        qa_chain = load_ai_engine()
-    except Exception as e:
-        st.warning(f"AI failed to load: {e}")
-
-
+# --- 1. LOAD DATA (Fast & Free) ---
 @st.cache_data
-
-def load_data():
+def load_static_data():
+    # A. Load Map
     gdf = gpd.read_file("data/raw/toronto_zoning.geojson")
-
+    # Ensure correct coordinate system for PyDeck
     if gdf.crs.to_string() != "EPSG:4326":
         gdf = gdf.to_crs(epsg=4326)
-    return gdf
+        
+    # B. Load AI Summaries (The file you just made)
+    if not os.path.exists("data/zone_dictionary.json"):
+        st.error("❌ 'data/zone_dictionary.json' not found. Run precompute.py first!")
+        return None, {}
+        
+    with open("data/zone_dictionary.json", "r") as f:
+        summaries = json.load(f)
+        
+    return gdf, summaries
 
-st.title("PermitGPT: Ontario Zoning Decoder")
+# Run the loader
+try:
+    data, zone_summaries = load_static_data()
+    if data is None:
+        st.stop()
+except Exception as e:
+    st.error(f"Critical Error loading data: {e}")
+    st.stop()
 
-col1, col2 = st.columns([2, 1])
+# --- 2. HEADER ---
+st.title("🏗️ Site Feasibility Engine")
+st.caption("Select a zone category to see instant development rights (Pre-computed by Gemini).")
 
+# --- 3. LAYOUT ---
+col1, col2 = st.columns([3, 1])
+
+# --- LEFT COLUMN: THE MAP ---
 with col1:
-    st.markdown("### Click on any zone to see its 'Secret Code'")
+    # 1. Get all available zones
+    all_zones = sorted(data['GEN_ZONE'].unique().astype(str))
+    
+    # 2. The Filter
+    zone_filter = st.multiselect(
+        "Filter Map by Zone Category:", 
+        options=all_zones,
+        default=all_zones[:1] # Default to just the first one so it's clean
+    )
+    
+    # 3. Apply Filter to Map
+    if zone_filter:
+        filtered_data = data[data['GEN_ZONE'].astype(str).isin(zone_filter)]
+    else:
+        filtered_data = data
 
-    try:    
-        data = load_data()
+    # ... (Keep your PyDeck Code exactly the same) ...
+    layer = pdk.Layer(
+        "GeoJsonLayer",
+        filtered_data,
+        opacity=0.5,
+        stroked=True,
+        filled=True,
+        get_fill_color="[0, 150, 255, 140]",
+        get_line_color="[255, 255, 255, 200]",
+        pickable=True,
+        auto_highlight=True,
+    )
+    
+    view_state = pdk.ViewState(latitude=43.6532, longitude=-79.3832, zoom=12, pitch=0)
 
-        layer = pdk.Layer(
-            "GeoJsonLayer",
-            data,
-            opacity=0.4,
-            stroked=True,
-            filled=True,
-            get_fill_color="[0, 150, 255, 100]",
-            get_line_color="[255, 255, 255]",
-            pickable=True,
-            auto_highlight=True,
-        )
+    st.pydeck_chart(pdk.Deck(
+        layers=[layer],
+        initial_view_state=view_state,
+        map_style="mapbox://styles/mapbox/dark-v11",
+        tooltip={"text": "Zone Code: {ZN_STRING}\nCategory: {GEN_ZONE}"}
+    ))
 
-        view_state = pdk.ViewState(
-            latitude=43.6532,
-            longitude=-79.3832,
-            zoom=13,
-            pitch=0,
-        )
-
-        st.pydeck_chart(pdk.Deck(
-            layers=[layer],
-            initial_view_state=view_state,
-            tooltip={"text": "Zone: {ZN_STRING}\nCategory: {GEN_ZONE}"}
-        ))
-    except Exception as e:
-        st.error(f"Error loading map: {e}")
-
+# --- RIGHT COLUMN: THE DASHBOARD ---
 with col2:
-    st.markdown("### 🤖 Zoning Assistant")
-    st.info("Ask questions based on the Toronto Zoning Bylaw PDFs.")
-
-    query = st.text_input("Question:", placeholder="e.g., What is the max height in Residential zones?")
-    if st.button("Ask AI") and query:
-        if not qa_chain:
-            st.error("AI is not connected. Check API Key or run ingest.py.")
-        else:
-            with st.spinner("Reading Bylaws..."):
-                try:
-                    # Invoke the LCEL chain directly
-                    response = qa_chain.invoke(query)
-                    st.success("Answer found:")
-                    st.write(response)
-                except Exception as e:
-                    st.error(f"Error during analysis: {e}")
-
-                with st.expander("See Source Context"):
-                    st.caption("Information retrieved from Vector Database based on semantic similarity.")
-
+    st.subheader("📋 Development Specs")
+    
+    # INTELLIGENT LOGIC:
+    # If the user filtered the map, automatically pick the first filtered zone.
+    # If they didn't filter, just pick the first zone in the list.
+    
+    if zone_filter:
+        # User filtered map -> Auto-select that zone for the dashboard
+        default_index = all_zones.index(zone_filter[0])
+    else:
+        default_index = 0
+        
+    # The Selector now "listens" to the map filter via `index=default_index`
+    selected_zone_cat = st.selectbox(
+        "Inspect Rules for Category:", 
+        options=all_zones,
+        index=default_index  # <--- THIS IS THE MAGIC LINK
+    )
+    
+    if selected_zone_cat:
+        st.markdown("---")
+        
+        # LOOKUP: Get the text from the JSON file
+        summary_text = zone_summaries.get(str(selected_zone_cat), "No summary available.")
+        
+        st.markdown(f"### Category: {selected_zone_cat}")
+        st.info(summary_text)
+        st.caption("ℹ️ Data extracted from Toronto Zoning Bylaw (Chapter 10-90).")
